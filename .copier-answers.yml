@@ -1,0 +1,15 @@
+# Changes here will be overwritten by Copier
+AnswerStrategy: recommended
+Authors: Carlos Vigil-Vásquez <carlos.vigil.v@gmail.com>
+CodeOfConductContact: carlos.vigil.v@gmail.com
+ConfigIndentation: 2
+JuliaIndentation: 4
+JuliaMinVersion: '1.10'
+License: MIT
+LicenseCopyrightHolders: Carlos Vigil-Vásquez
+MarkdownIndentation: 2
+PackageName: SubgraphGrammar
+PackageOwner: cvigilv
+PackageUUID: 8c38250f-3b61-5792-a541-9a81440c273c
+_commit: v0.14.1
+_src_path: https://github.com/JuliaBesties/BestieTemplate.jl

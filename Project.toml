@@ -1,0 +1,7 @@
+name = "SubgraphGrammar"
+uuid = "8c38250f-3b61-5792-a541-9a81440c273c"
+authors = ["Carlos Vigil-Vásquez <carlos.vigil.v@gmail.com>"]
+version = "0.1.0"
+
+[compat]
+julia = "1.10"
