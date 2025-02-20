@@ -1,125 +1,166 @@
 using Graphs
-using Tables: rows, columns, getcolumn, columnnames, columntable, AbstractColumns
 
-# Types and structs {{{1
-abstract type AbstractProcess end
-abstract type AbstractAlgebraic <: AbstractProcess end
+# Layer types
+abstract type AbstractAlgebraic end
+abstract type AbstractLayer <: AbstractAlgebraic end
 
-# Layer {{{2
-struct Columns{T}
-    columns::T
-end
-
-Base.@kwdef struct Layer <: AbstractAlgebraic
+Base.@kwdef struct BaseLayer <: AbstractLayer
     transformation::Function = identity
     graph::Any = nothing
     data::Any = nothing
-    type::Symbol = :base
 end
 
-⨟(f, g) = f === identity ? g : g === identity ? f : g ∘ f
+Base.@kwdef struct DataLayer <: AbstractLayer
+    transformation::Function = identity
+    graph::Any = nothing
+    data::Any = nothing
+end
 
-function Base.:*(l::Layer, l′::Layer)
-    if l.type == l′.type
-        error("Multipliying the same kind of layers is dissallowed")
-    end
+Base.@kwdef struct InferLayer <: AbstractLayer
+    transformation::Function = identity
+    graph::Any = nothing
+    subgraphs::Any = nothing
+    data::Any = nothing
+end
+
+Base.@kwdef struct MatchLayer <: AbstractLayer
+    transformation::Function = identity
+    graph::Any = nothing
+    subgraphs::Any = nothing
+    data::Any = nothing
+end
+
+Base.@kwdef struct LabelLayer <: AbstractLayer
+    transformation::Function = identity
+    graph::Any = nothing
+    data::Any = nothing
+end
+
+Base.@kwdef struct ReduceLayer <: AbstractLayer
+    transformation::Function = identity
+    graph::Any = nothing
+    data::Any = nothing
+end
+
+# Collection of layers (a.k.a subgraph decomposition pipeline)
+struct LayerCollection <: AbstractAlgebraic
+    layers::Vector{AbstractLayer}
+end
+
+Base.convert(::Type{LayerCollection}, l::AbstractLayer) = LayerCollection([l])
+
+Base.getindex(layers::LayerCollection, i::Int) = layers.layers[i]
+Base.length(layers::LayerCollection) = length(layers.layers)
+Base.eltype(::Type{LayerCollection}) = AbstractLayer
+Base.iterate(layers::LayerCollection, args...) = iterate(layers.layers, args...)
+
+function Base.:+(a::AbstractAlgebraic, a′::AbstractAlgebraic)
+    layers::LayerCollection, layers′::LayerCollection = a, a′
+    return LayerCollection(vcat(layers.layers, layers′.layers))
+end
+
+function Base.:*(a::AbstractAlgebraic, a′::AbstractAlgebraic)
+    layers::LayerCollection, layers′::LayerCollection = a, a′
+    return LayerCollection([layer * layer′ for layer in layers for layer′ in layers′])
+end
+
+
+# Inter-layer operations
+⨟(f, g) = f === identity ? g : g === identity ? f : (x, y) -> g(f(x, y)...)
+
+function Base.:*(l::T, l′::T) where {T<:AbstractLayer}
+    error("Multipliying the same kind of layers is dissallowed")
+end
+
+function Base.:*(
+    l::Ta,
+    l′::Tb,
+) where {Ta<:Union{MatchLayer,InferLayer},Tb<:Union{InferLayer,MatchLayer}}
+    error("Multiplying layers that generate subgraphs is dissalowed")
+end
+
+function Base.:*(l::DataLayer, l′::T) where {T<:Union{InferLayer,MatchLayer}}
     transformation = l.transformation ⨟ l′.transformation
     graph = isnothing(l′.graph) ? l.graph : l′.graph
     data = isnothing(l′.data) ? l.data : l′.data
 
-    return Layer(graph = graph, transformation = transformation, data = data, type = :type)
+    return T(graph = graph, transformation = transformation, data = data)
 end
 
+function Base.:*(
+    l::Ta,
+    l′::Tb,
+) where {Ta<:Union{InferLayer,MatchLayer},Tb<:Union{LabelLayer,ReduceLayer}}
+    transformation = l.transformation ⨟ l′.transformation
+    graph = isnothing(l′.graph) ? l.graph : l′.graph
+    data = isnothing(l′.data) ? l.data : l′.data
 
-
-# Layers {{{2
-struct Layers <: AbstractAlgebraic
-    layers::Vector{Layer}
+    return Tb(graph = graph, transformation = transformation, data = data)
 end
 
-Base.convert(::Type{Layers}, l::Layer) = Layers([l])
+function Base.:*(l::LabelLayer, l′::ReduceLayer)
+    transformation = l.transformation ⨟ l′.transformation
+    graph = isnothing(l′.graph) ? l.graph : l′.graph
+    data = isnothing(l′.data) ? l.data : l′.data
 
-Base.getindex(layers::Layers, i::Int) = layers.layers[i]
-Base.length(layers::Layers) = length(layers.layers)
-Base.eltype(::Type{Layers}) = Layer
-Base.iterate(layers::Layers, args...) = iterate(layers.layers, args...)
-
-function Base.:+(a::AbstractAlgebraic, a′::AbstractAlgebraic)
-    layers::Layers, layers′::Layers = a, a′
-    return Layers(vcat(layers.layers, layers′.layers))
+    return ReduceLayer(graph = graph, transformation = transformation, data = data)
 end
 
-function Base.:*(a::AbstractAlgebraic, a′::AbstractAlgebraic)
-    layers::Layers, layers′::Layers = a, a′
-    return Layers([layer * layer′ for layer in layers for layer′ in layers′])
-end
-
-# Operators {{{2
-function data(G::AbstractGraph, M::Any = nothing)
-    Layer(graph = G, data = isnothing(M) ? nothing : Columns(columns(M)), type = :data)
-end
-
-function match(g::AbstractGraph)
-    Layer(
-        transformation = G ->
-            Graphs.Experimental.all_induced_subgraphisomorph(G, g) |>
-            collect |>
-            s -> map(p -> first.(p), s),
-        type = :match,
-    )
+# API
+function data(G::AbstractGraph, data)
+    return DataLayer(graph = G, data = data)
 end
 
 function infer(ƒ::Function, args...; kwargs...)
-    Layer(transformation = G -> ƒ(G, args...; kwargs...), type = :infer)
+    return InferLayer(transformation = (G, data) -> (ƒ(G, args...; kwargs...), data))
 end
 
-# FIXME: This doesn't take into consideration metadata provided
+function match(g::AbstractGraph)
+    return MatchLayer(
+        transformation = (G, data) -> (
+            collect(
+                map(
+                    p -> first.(p),
+                    collect(Graphs.Experimental.all_induced_subgraphisomorph(G, g)),
+                ),
+            ),
+            data,
+        ),
+    )
+end
+
 function label(d::Symbol)
-    Layer(transformation = S -> map(S) do s
-        map(n -> get(data[d], n, missing), s)
-    end, type = :label)
+    return LabelLayer(
+        transformation = (G, data) -> (collect(map(G) do s
+            map(n -> get(data[d], n, missing), s)
+        end), data),
+    )
 end
 
-function reduce()
-    Layer(transformation = hash; type = :reduce)
+function reduce(ƒ::Function = hash, args...; kwargs...)
+    return ReduceLayer(transformation = (G, data) -> (ƒ(G, args...; kwargs...), data))
 end
 
-function reduce(ƒ::Function, args...; kwargs...)
-    Layer(transformation = S -> ƒ(S, args...; kwargs...), type = :reduce)
+function compute(L::AbstractLayer)
+    return first(L.transformation(L.graph, L.data))
 end
 
-
-function compute(l::Layer)
-    return l.transformation(l.graph)
-end
-
-function compute(L::Layers)
+function compute(L::LayerCollection)
     return Base.reduce(append!, map(L) do l
         compute(l)
     end, init = [])
 end
 
-# # Examples {{{1
-#
-n_nodes = 50
-mygraph = erdos_renyi(n_nodes, 0.1)
-mydata = (; color = rand([:red, :blue, :yellow], n_nodes))
+# Test
+G = path_graph(10)
+M = (; color = rand([:red, :blue, :yellow], 10), degree = collect(degree(G)))
 
-using DataStructures: counter
+data(G, M) * match(path_graph(3)) |> compute
 
-allneighborhoods(g, args...; kwargs...) =
-    map(1:nv(g)) do node
-        neighborhood(g, node, args...; kwargs...)
-    end |> collect
+data(G, M) * match(path_graph(3)) * label(:color) |> compute
 
-#! format: off
-(
-    data(mygraph, mydata)
-    * (
-        match(Graph([0 1 0 1; 1 0 1 0; 0 1 0 1; 1 0 1 0])) +
-        infer(allneighborhoods, 1)
-    )
-    * label(:color)
-    * reduce(unique)
-) |> compute
-# #! format: on
+data(G, M) * match(path_graph(3)) * label(:color) * reduce(unique) |> compute
+
+compute(
+    data(G, M) * match(path_graph(3)) * (label(:color) + label(:degree)) * reduce(unique),
+)
