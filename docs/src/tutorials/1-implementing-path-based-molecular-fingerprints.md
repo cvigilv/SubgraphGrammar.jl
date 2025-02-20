@@ -1,0 +1,175 @@
+```@meta
+EditURL = "../literate-tutorials/1-implementing-path-based-molecular-fingerprints.jl"
+```
+
+# Implementing molecular fingerprints with SubgraphGrammar.jl
+
+TODO: Description with image
+
+````@example 1-implementing-path-based-molecular-fingerprints
+using CairoMakie
+using Graphs
+using MolecularGraph
+using SubgraphGrammar
+using DataStructures: counter
+````
+
+Read molecules
+TODO: explain
+
+````@example 1-implementing-path-based-molecular-fingerprints
+mol1 = smilestomol("Cc1ccc(OC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2c(C)cnc2)n1")
+````
+
+````@example 1-implementing-path-based-molecular-fingerprints
+mol2 = smilestomol("Cc1ccc(NC(=O)c2ccc(CN3CCN(CCO)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1")
+````
+
+## Atom count descriptor
+
+````@example 1-implementing-path-based-molecular-fingerprints
+mol_atoms = m -> [m.vprops[i].symbol for i = 1:nv(m.graph)]
+
+
+(
+    data(mol1.graph, (; atom = mol_atoms(mol1))) *  # Initialize pipeline
+    SubgraphGrammar.match(Graph(1))               # Find all nodes
+    *
+    label(:atom)                                # Label them by atom type
+    *
+    SubgraphGrammar.reduce(counter)             # Count instances of each labeled node
+) |> compute
+````
+
+````@example 1-implementing-path-based-molecular-fingerprints
+(
+    data(mol2.graph, (; atom = mol_atoms(mol2))) *
+    SubgraphGrammar.match(Graph(1)) *
+    label(:atom) *
+    SubgraphGrammar.reduce(counter)
+) |> compute
+````
+
+You can also define the pipeline to use for fingerprinting and then compute
+
+````@example 1-implementing-path-based-molecular-fingerprints
+atom_count_fp = (
+    SubgraphGrammar.match(Graph(1))               # Find all nodes
+    * label(:atom)                                # Label them by atom type
+    * SubgraphGrammar.reduce(counter)             # Count instances of each labeled node
+)
+````
+
+````@example 1-implementing-path-based-molecular-fingerprints
+compute(data(mol1.graph, (; atom = mol_atoms(mol1))) * atom_count_fp)
+````
+
+````@example 1-implementing-path-based-molecular-fingerprints
+compute(data(mol2.graph, (; atom = mol_atoms(mol2))) * atom_count_fp)
+````
+
+Or we can compute both on the fly and get a vector of fingerprints:
+
+````@example 1-implementing-path-based-molecular-fingerprints
+df = (
+    data(mol1.graph, (; atom = mol_atoms(mol1))) +
+    data(mol2.graph, (; atom = mol_atoms(mol2)))
+)
+
+compute(df * atom_count_fp; flatten = false)
+````
+
+---
+
+## Path-based fingerprint
+
+TODO: explain
+
+````@example 1-implementing-path-based-molecular-fingerprints
+path_fp = (
+    sum([SubgraphGrammar.match(path_graph(i)) for i = 1:7])  # Find all paths from 1 to 7 atoms long
+    *
+    label(:atom)                                            # Label by atom type
+    *
+    SubgraphGrammar.reduce(unique)                          # Remove duplicate subgraphs
+)
+````
+
+Getting information from molecules
+TODO: explain
+
+````@example 1-implementing-path-based-molecular-fingerprints
+computed_path_fp = [compute(mol * path_fp) for mol in df.layers]
+````
+
+Compute Tanimoto / Jaccard index to assess molecule similarity
+
+````@example 1-implementing-path-based-molecular-fingerprints
+length(Set(computed_path_fp[1]) ∩ Set(computed_path_fp[2])) /
+length(Set(computed_path_fp[1]) ∪ Set(computed_path_fp[2]))
+````
+
+# Circular fingerprints
+
+Small helper function to get circular patterns
+
+````@example 1-implementing-path-based-molecular-fingerprints
+allneighbors = (G, args) -> map(1:nv(G)) do node
+    neighborhood(G, node, args...)
+end
+
+allneighbors(mol1, 1)
+````
+
+Define pipeline
+
+````@example 1-implementing-path-based-molecular-fingerprints
+circular_fp = (SubgraphGrammar.infer(allneighbors, 2) * (label(:atom) + label()))
+````
+
+Compute pipeline
+
+````@example 1-implementing-path-based-molecular-fingerprints
+function merger(arr1, arr2)
+    return [
+        [(a, b) for (a, b) in zip(subarr1, subarr2)] for
+        (subarr1, subarr2) in zip(arr1, arr2)
+    ]
+end
+
+mol1_circ_fp = compute(first(df.layers) * circular_fp; flatten = false)
+````
+
+````@example 1-implementing-path-based-molecular-fingerprints
+mol2_circ_fp = compute(last(df.layers) * circular_fp; flatten = false)
+````
+
+Lets see the common subgraphs
+
+````@example 1-implementing-path-based-molecular-fingerprints
+common_fp = Set(first(mol1_circ_fp)) ∩ Set(first(mol2_circ_fp))
+````
+
+Lets paint this in the molecules
+
+````@example 1-implementing-path-based-molecular-fingerprints
+mol1_common_fp = last(mol1_circ_fp)[map(collect(common_fp)) do circ
+    findall(==(circ), first(mol1_circ_fp))
+end|>Iterators.flatten|>collect]
+mol2_common_fp = last(mol2_circ_fp)[map(collect(common_fp)) do circ
+    findall(==(circ), first(mol2_circ_fp))
+end|>Iterators.flatten|>collect];
+nothing #hide
+````
+
+````@example 1-implementing-path-based-molecular-fingerprints
+html_fixed_size(mol1, 300, 300; atomhighlight = unique(Iterators.flatten(mol1_common_fp)))
+````
+
+````@example 1-implementing-path-based-molecular-fingerprints
+html_fixed_size(mol2, 300, 300; atomhighlight = unique(Iterators.flatten(mol2_common_fp)))
+````
+
+---
+
+*This page was generated using [Literate.jl](https://github.com/fredrikekre/Literate.jl).*
