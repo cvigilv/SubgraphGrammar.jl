@@ -5,7 +5,7 @@ using Tables: rows, columns, getcolumn, columnnames, columntable, AbstractColumn
 # Layer type
 abstract type AbstractAlgebraic end
 
-Base.@kwdef struct Layer <: AbstractAlgebraic
+Base.@kwdef struct Operation <: AbstractAlgebraic
     transformation::Function = identity
     graph::Any = nothing
     data::Any = nothing
@@ -16,25 +16,27 @@ end
 #   - Add 3 character hash at end of layer type
 #   - Hash based on combination of layer arguments
 
-# Collection of layers (a.k.a subgraph decomposition pipeline)
-struct Layers <: AbstractAlgebraic
-    layers::Vector{Layer}
+# Collection of operations (a.k.a subgraph decomposition pipeline)
+struct Pipeline <: AbstractAlgebraic
+    operations::Vector{Operation}
 end
 
-Base.convert(::Type{Layers}, l::Layer) = Layers([l])
-Base.getindex(layers::Layers, i::Int) = layers.layers[i]
-Base.length(layers::Layers) = length(layers.layers)
-Base.eltype(::Type{Layers}) = Layer
-Base.iterate(layers::Layers, args...) = iterate(layers.layers, args...)
+Base.convert(::Type{Pipeline}, l::Operation) = Pipeline([l])
+Base.getindex(pipeline::Pipeline, i::Int) = pipeline.operations[i]
+Base.length(pipelinr::Pipeline) = length(pipelinr.operations)
+Base.eltype(::Type{Pipeline}) = Operation
+Base.iterate(pipeline::Pipeline, args...) = iterate(pipeline.operations, args...)
 
 function Base.:+(a::AbstractAlgebraic, a′::AbstractAlgebraic)
-    layers::Layers, layers′::Layers = a, a′
-    return Layers(vcat(layers.layers, layers′.layers))
+    operations::Pipeline, operations′::Pipeline = a, a′
+    return Pipeline(vcat(operations.operations, operations′.operations))
 end
 
 function Base.:*(a::AbstractAlgebraic, a′::AbstractAlgebraic)
-    layers::Layers, layers′::Layers = a, a′
-    return Layers([layer * layer′ for layer in layers for layer′ in layers′])
+    operations::Pipeline, operations′::Pipeline = a, a′
+    return Pipeline([
+        operation * operation′ for operation in operations for operation′ in operations′
+    ])
 end
 
 # TODO: Add string representation of Layers
@@ -42,40 +44,45 @@ end
 #   - Idea: has distinct instances of operators and add a #N after each symbol (similar to
 #     how Julia does it with anonymous function
 
-# Inter-layer operations
+# Inter-operations algebra
 ⨟(f, g) = f === identity ? g : g === identity ? f : (x, y) -> g(f(x, y)...)
 
-function Base.:*(l::T, l′::T) where {T<:Layer}
+function Base.:*(l::T, l′::T) where {T<:Operation}
     # Check if operation is valid
     if l.type == l′.type
-        error("Multipliying the same kind of layers is dissallowed")
+        error("Multipliying the same kind of operations is dissallowed")
     elseif (l.type == :match && l′.type == :infer) ||
            (l.type == :infer && l′.type == :match)
-        error("Multiplying layers that generate subgraphs is dissallowed")
+        error("Multiplying operations that generate subgraphs is dissallowed")
     end
 
-    # Create new layer based on composition of previous layers
+    # Create new operation based on composition of previous operations
     transformation = l.transformation ⨟ l′.transformation
     graph = isnothing(l′.graph) ? l.graph : l′.graph
     data = isnothing(l′.data) ? l.data : l′.data
     type = vcat(l.type, l′.type)
 
-    return Layer(graph = graph, transformation = transformation, data = data, type = type)
+    return Operation(
+        graph = graph,
+        transformation = transformation,
+        data = data,
+        type = type,
+    )
 end
 
 # API
 function data(G::AbstractGraph, data = nothing)
-    return Layer(graph = G, data = data, type = :data)
+    return Operation(graph = G, data = data, type = :data)
 end
 
 # Alternative names: apply, ruleset, rule
 function infer(ƒ::Function, args...; kwargs...)
-    Layer(transformation = (G, data) -> (ƒ(G, args...; kwargs...), data), type = :infer)
+    Operation(transformation = (G, data) -> (ƒ(G, args...; kwargs...), data), type = :infer)
 end
 
 # Alternative names: search
 function match(g::AbstractGraph)
-    Layer(
+    Operation(
         transformation = (G, data) -> (
             collect(
                 map(
@@ -91,7 +98,7 @@ end
 
 # Alternative names: annotate
 function label(d::Any = nothing)
-    Layer(
+    Operation(
         transformation = (G, data) -> (collect(map(G) do s
             if !isnothing(d)
                 map(n -> get(data[d], n, missing), s)
@@ -105,14 +112,17 @@ end
 
 # Alternative names: fold, combine
 function reduce(ƒ::Function = hash, args...; kwargs...)
-    Layer(transformation = (G, data) -> (ƒ(G, args...; kwargs...), data), type = :reduce)
+    Operation(
+        transformation = (G, data) -> (ƒ(G, args...; kwargs...), data),
+        type = :reduce,
+    )
 end
 
-function compute(l::Layer)
+function compute(l::Operation)
     return first(l.transformation(l.graph, l.data))
 end
 
-function compute(L::Layers; flatten = true)
+function compute(L::Pipeline; flatten = true)
     results = map(L) do l
         compute(l)
     end
