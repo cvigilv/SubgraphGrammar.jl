@@ -72,7 +72,11 @@ end
 
 # API
 function data(G::AbstractGraph, data = nothing)
-    return Operation(graph = G, data = data, type = :data)
+    return Operation(
+        graph = G,
+        data = !isnothing(data) ? columns(data) : nothing,
+        type = :data,
+    )
 end
 
 # Alternative names: apply, ruleset, rule
