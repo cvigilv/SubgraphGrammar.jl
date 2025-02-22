@@ -100,6 +100,16 @@ function match(g::AbstractGraph)
     )
 end
 
+function flatten(over::Symbol = :nodes)
+    if over == :nodes
+        Operation(transformation = (G, data) -> (collect(1:nv(G)), data), type = :flatten)
+    elseif over == :edges
+        Operation(transformation = (G, data) -> (collect(1:ne(G)), data), type = :flatten)
+    else
+        error("Flattening graph only allowed over :nodes or :edges")
+    end
+end
+
 # Alternative names: annotate
 function label(d::Any = nothing)
     Operation(
